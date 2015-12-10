@@ -13,7 +13,6 @@ import (
 	"github.com/restic/restic/debug"
 	"github.com/restic/restic/filter"
 	"github.com/restic/restic/repository"
-	"golang.org/x/crypto/ssh/terminal"
 )
 
 type CmdBackup struct {
@@ -32,6 +31,13 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func sendStatus(code int, message string, args ...interface{}) {
+        if len(args) > 0 {
+                message = fmt.Sprintf(message, args...)
+        }
+        os.Stderr.WriteString(fmt.Sprintf("![%02x] %s\n", code, message))
 }
 
 func formatBytes(c uint64) string {
@@ -108,12 +114,13 @@ func (cmd CmdBackup) newScanProgress() *restic.Progress {
 		return nil
 	}
 
+        sendStatus(1, "[Dirs,Files,Bytes]")
 	p := restic.NewProgress(time.Second)
 	p.OnUpdate = func(s restic.Stat, d time.Duration, ticker bool) {
-		fmt.Printf("\x1b[2K[%s] %d directories, %d files, %s\r", formatDuration(d), s.Dirs, s.Files, formatBytes(s.Bytes))
+		sendStatus(2, "[%d,%d,%d]", s.Dirs, s.Files, s.Bytes)
 	}
 	p.OnDone = func(s restic.Stat, d time.Duration, ticker bool) {
-		fmt.Printf("\x1b[2Kscanned %d directories, %d files in %s\n", s.Dirs, s.Files, formatDuration(d))
+	        sendStatus(3, "[%d,%d,%d]", s.Dirs, s.Files, s.Bytes)
 	}
 
 	return p
@@ -129,6 +136,13 @@ func (cmd CmdBackup) newArchiveProgress(todo restic.Stat) *restic.Progress {
 	var bps, eta uint64
 	itemsTodo := todo.Files + todo.Dirs
 
+        var sendEvery uint32 = 1
+        var nextSend uint32 = 0
+        var percentageDone uint32
+
+        sendStatus(10, "[Percent,Items,Bps,ETA]")
+        sendStatus(11, "[100,%d,0,0]", itemsTodo)
+
 	archiveProgress.OnUpdate = func(s restic.Stat, d time.Duration, ticker bool) {
 		sec := uint64(d / time.Second)
 		if todo.Bytes > 0 && sec > 0 && ticker {
@@ -142,28 +156,20 @@ func (cmd CmdBackup) newArchiveProgress(todo restic.Stat) *restic.Progress {
 
 		itemsDone := s.Files + s.Dirs
 
-		status1 := fmt.Sprintf("[%s] %s  %s/s  %s / %s  %d / %d items  %d errors  ",
-			formatDuration(d),
-			formatPercent(s.Bytes, todo.Bytes),
-			formatBytes(bps),
-			formatBytes(s.Bytes), formatBytes(todo.Bytes),
-			itemsDone, itemsTodo,
-			s.Errors)
-		status2 := fmt.Sprintf("ETA %s ", formatSeconds(eta))
+                percentageDone = uint32(float32(s.Bytes) / float32(todo.Bytes))
 
-		w, _, err := terminal.GetSize(int(os.Stdout.Fd()))
-		if err == nil {
-			if len(status1)+len(status2) > w {
-				max := w - len(status2) - 4
-				status1 = status1[:max] + "... "
-			}
-		}
+                if percentageDone < nextSend {
+                        return
+                }
 
-		fmt.Printf("\x1b[2K%s%s\r", status1, status2)
+                sendStatus(12, "[%d,%d,%d,%d]", percentageDone, itemsDone, bps, eta)
+                nextSend += sendEvery
 	}
 
 	archiveProgress.OnDone = func(s restic.Stat, d time.Duration, ticker bool) {
-		fmt.Printf("\nduration: %s, %s\n", formatDuration(d), formatRate(todo.Bytes, d))
+	        itemsDone := s.Files + s.Dirs
+	        sendStatus(12, "[100,%d,0,0]", itemsDone)
+	        sendStatus(13, "Duration: %s, %s", formatDuration(d), formatRate(todo.Bytes, d))
 	}
 
 	return archiveProgress
