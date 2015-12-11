@@ -15,6 +15,8 @@ import (
 	"github.com/restic/restic/repository"
 )
 
+var STATUS_INTERVAL uint64 = 1
+
 type CmdBackup struct {
 	Parent   string   `short:"p" long:"parent"  description:"use this parent snapshot (default: last snapshot in repo that has the same target)"`
 	Force    bool     `short:"f" long:"force"   description:"Force re-reading the target. Overrides the \"parent\" flag"`
@@ -114,10 +116,19 @@ func (cmd CmdBackup) newScanProgress() *restic.Progress {
 		return nil
 	}
 
+        var nextSend uint64 = 0
+
         sendStatus(1, "[Dirs,Files,Bytes]")
 	p := restic.NewProgress(time.Second)
 	p.OnUpdate = func(s restic.Stat, d time.Duration, ticker bool) {
+	        sec := uint64(d / time.Second)
+	        
+	        if sec < nextSend {
+	                return
+	        }
+	        
 		sendStatus(2, "[%d,%d,%d]", s.Dirs, s.Files, s.Bytes)
+		nextSend = sec + STATUS_INTERVAL
 	}
 	p.OnDone = func(s restic.Stat, d time.Duration, ticker bool) {
 	        sendStatus(3, "[%d,%d,%d]", s.Dirs, s.Files, s.Bytes)
@@ -136,9 +147,8 @@ func (cmd CmdBackup) newArchiveProgress(todo restic.Stat) *restic.Progress {
 	var bps, eta uint64
 	itemsTodo := todo.Files + todo.Dirs
 
-        var sendEvery uint32 = 1
-        var nextSend uint32 = 0
-        var percentageDone uint32
+        var nextSend uint64 = 0
+        var percentageDone uint64
 
         sendStatus(10, "[Percent,Items,Bps,ETA]")
         sendStatus(11, "[100,%d,0,0]", itemsTodo)
@@ -156,14 +166,14 @@ func (cmd CmdBackup) newArchiveProgress(todo restic.Stat) *restic.Progress {
 
 		itemsDone := s.Files + s.Dirs
 
-                percentageDone = uint32(float32(s.Bytes) / float32(todo.Bytes))
+                percentageDone = uint64(float32(s.Bytes) / float32(todo.Bytes))
 
-                if percentageDone < nextSend {
+                if sec < nextSend {
                         return
                 }
 
                 sendStatus(12, "[%d,%d,%d,%d]", percentageDone, itemsDone, bps, eta)
-                nextSend += sendEvery
+                nextSend = sec + STATUS_INTERVAL
 	}
 
 	archiveProgress.OnDone = func(s restic.Stat, d time.Duration, ticker bool) {
