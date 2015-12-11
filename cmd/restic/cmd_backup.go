@@ -16,6 +16,7 @@ import (
 )
 
 var STATUS_INTERVAL uint64 = 1
+var MB uint64 = 1000000
 
 type CmdBackup struct {
 	Parent   string   `short:"p" long:"parent"  description:"use this parent snapshot (default: last snapshot in repo that has the same target)"`
@@ -127,11 +128,11 @@ func (cmd CmdBackup) newScanProgress() *restic.Progress {
 	                return
 	        }
 	        
-		sendStatus(2, "[%d,%d,%d]", s.Dirs, s.Files, s.Bytes)
+		sendStatus(2, "[%d,%d,%d]", s.Dirs, s.Files, s.Bytes/MB)
 		nextSend = sec + STATUS_INTERVAL
 	}
 	p.OnDone = func(s restic.Stat, d time.Duration, ticker bool) {
-	        sendStatus(3, "[%d,%d,%d]", s.Dirs, s.Files, s.Bytes)
+	        sendStatus(3, "[%d,%d,%d]", s.Dirs, s.Files, s.Bytes/MB)
 	}
 
 	return p
@@ -148,10 +149,10 @@ func (cmd CmdBackup) newArchiveProgress(todo restic.Stat) *restic.Progress {
 	itemsTodo := todo.Files + todo.Dirs
 
         var nextSend uint64 = 0
-        var percentageDone uint64
+        var percentageDone float64
 
-        sendStatus(10, "[Percent,Items,Bps,ETA]")
-        sendStatus(11, "[100,%d,0,0]", itemsTodo)
+        sendStatus(10, "[Percent,Items,MB/s,ETA]")
+        sendStatus(11, "[100.00,%d,0,0]", itemsTodo)
 
 	archiveProgress.OnUpdate = func(s restic.Stat, d time.Duration, ticker bool) {
 		sec := uint64(d / time.Second)
@@ -166,19 +167,19 @@ func (cmd CmdBackup) newArchiveProgress(todo restic.Stat) *restic.Progress {
 
 		itemsDone := s.Files + s.Dirs
 
-                percentageDone = uint64(float32(s.Bytes) / float32(todo.Bytes))
+                percentageDone = float64(s.Bytes) / float64(todo.Bytes) * 100
 
                 if sec < nextSend {
                         return
                 }
 
-                sendStatus(12, "[%d,%d,%d,%d]", percentageDone, itemsDone, bps, eta)
+                sendStatus(12, "[%02.02f,%d,%d,%d]", percentageDone, itemsDone, bps/MB, eta)
                 nextSend = sec + STATUS_INTERVAL
 	}
 
 	archiveProgress.OnDone = func(s restic.Stat, d time.Duration, ticker bool) {
 	        itemsDone := s.Files + s.Dirs
-	        sendStatus(12, "[100,%d,0,0]", itemsDone)
+	        sendStatus(12, "[100.00,%d,0,0]", itemsDone)
 	        sendStatus(13, "Duration: %s, %s", formatDuration(d), formatRate(todo.Bytes, d))
 	}
 
