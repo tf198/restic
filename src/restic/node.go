@@ -230,6 +230,7 @@ func (node Node) createDirAt(path string) error {
 }
 
 func (node Node) createFileAt(ctx context.Context, path string, repo Repository, idx *HardlinkIndex) error {
+	/* this should be redundant now we are renaming
 	if node.Links > 1 && idx.Has(node.Inode, node.DeviceID) {
 		if err := fs.Remove(path); !os.IsNotExist(err) {
 			return errors.Wrap(err, "RemoveCreateHardlink")
@@ -239,6 +240,48 @@ func (node Node) createFileAt(ctx context.Context, path string, repo Repository,
 			return errors.Wrap(err, "CreateHardlink")
 		}
 		return nil
+	}
+	*/
+
+	var prevFile *os.File
+	var prevOffsets map[string]chunkOffsets
+	var prevChunks string
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		// doesn't exist - use an empty map
+		prevOffsets = make(map[string]chunkOffsets)
+	} else {
+
+		// move the current file out the way and chunk it
+		tmpPath := path + ".prev"
+		if err = fs.Rename(path, tmpPath); err != nil {
+			return errors.Wrap(err, "RenamePrevious")
+		}
+
+		if prevFile, err = os.Open(tmpPath); err != nil {
+			return errors.Wrap(err, "OpenPrevious")
+		}
+
+		// calculate all the chunk offsets for the current file
+		if prevOffsets, prevChunks, err = FileChunks(prevFile, repo.Config().ChunkerPolynomial); err != nil {
+			prevFile.Close()
+			return errors.Wrap(err, "FileChunks")
+		}
+
+		// if there are no changes just rename it back
+		if prevChunks == ChunkHash(node.Content) {
+			debug.Log("Skip '%s' - identical", path)
+			prevFile.Close()
+			return fs.Rename(tmpPath, path)
+		}
+
+		// clean up after ourselves
+		defer func() {
+			prevFile.Close()
+			if err := fs.Remove(tmpPath); err != nil {
+				debug.Log("Failed to remove '%s'", tmpPath)
+			}
+		}()
 	}
 
 	f, err := fs.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
@@ -250,21 +293,39 @@ func (node Node) createFileAt(ctx context.Context, path string, repo Repository,
 
 	var buf []byte
 	for _, id := range node.Content {
-		size, err := repo.LookupBlobSize(id, DataBlob)
-		if err != nil {
-			return err
-		}
 
 		buf = buf[:cap(buf)]
-		if len(buf) < CiphertextLength(int(size)) {
-			buf = NewBlobBuffer(int(size))
-		}
 
-		n, err := repo.LoadBlob(ctx, DataBlob, id, buf)
-		if err != nil {
-			return err
+		if offsets, ok := prevOffsets[id.String()]; ok {
+			debug.Log("Hit chunk %s [%x %x]", id, offsets.Start, offsets.Length)
+
+			if len(buf) < int(offsets.Length) {
+				buf = make([]byte, offsets.Length)
+			} else {
+				buf = buf[:offsets.Length]
+			}
+
+			if _, err := prevFile.ReadAt(buf, offsets.Start); err != nil {
+				return errors.Wrap(err, "TempReadAt")
+			}
+
+		} else {
+			debug.Log("Miss chunk %s", id)
+			size, err := repo.LookupBlobSize(id, DataBlob)
+			if err != nil {
+				return err
+			}
+
+			if len(buf) < CiphertextLength(int(size)) {
+				buf = NewBlobBuffer(int(size))
+			}
+
+			n, err := repo.LoadBlob(ctx, DataBlob, id, buf)
+			if err != nil {
+				return err
+			}
+			buf = buf[:n]
 		}
-		buf = buf[:n]
 
 		_, err = f.Write(buf)
 		if err != nil {
