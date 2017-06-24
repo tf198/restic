@@ -230,7 +230,7 @@ func (node Node) createDirAt(path string) error {
 }
 
 func (node Node) createFileAt(ctx context.Context, path string, repo Repository, idx *HardlinkIndex) error {
-	/* this should be redundant now we are renaming
+
 	if node.Links > 1 && idx.Has(node.Inode, node.DeviceID) {
 		if err := fs.Remove(path); !os.IsNotExist(err) {
 			return errors.Wrap(err, "RemoveCreateHardlink")
@@ -241,13 +241,12 @@ func (node Node) createFileAt(ctx context.Context, path string, repo Repository,
 		}
 		return nil
 	}
-	*/
 
 	var prevFile *os.File
 	var prevOffsets map[string]chunkOffsets
 	var prevChunks string
 
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Stat(path); os.IsNotExist(err) || repo == nil {
 		// doesn't exist - use an empty map
 		prevOffsets = make(map[string]chunkOffsets)
 	} else {
