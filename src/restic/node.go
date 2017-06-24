@@ -230,7 +230,6 @@ func (node Node) createDirAt(path string) error {
 }
 
 func (node Node) createFileAt(ctx context.Context, path string, repo Repository, idx *HardlinkIndex) error {
-
 	if node.Links > 1 && idx.Has(node.Inode, node.DeviceID) {
 		if err := fs.Remove(path); !os.IsNotExist(err) {
 			return errors.Wrap(err, "RemoveCreateHardlink")
